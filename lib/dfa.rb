@@ -1,3 +1,4 @@
+require 'set'
 
 class BlockedError < ArgumentError
 end
@@ -7,7 +8,7 @@ end
 
 class DeterministicFiniteAutomaton
   attr_accessor :states, :final_states, :initial_state
-  attr_accessor :delta, :alphabet, :states_transformation
+  attr_accessor :alphabet, :states_transitions
 
   # Nothing but a constructor
   def initialize
@@ -15,7 +16,7 @@ class DeterministicFiniteAutomaton
     @alphabet = []
     @states = []
     @initial_state = ''
-    @states_transformation = []
+    @states_transitions = []
   end
 
   # Generates a deterministic finite automata from the given file
@@ -31,22 +32,22 @@ class DeterministicFiniteAutomaton
     dfa.states.each do |state|
       if state.include? '-'
         state.sub! '-', ''
-        dfa.initial_state = state
+        dfa.initial_state = [state]
       elsif state.include? '+'
         state.sub! '+', ''
-        dfa.final_states.push(state)
+        dfa.final_states.push([state])
       end
     end
 
-    alphabet_characters = file_lines[0].split
+    dfa.states.map! { |state| [state] }
 
     file_lines[1..-1].each do |line|
       line_chars = line.split[1..-1]
       line_chars.each_with_index do |line_char, lc_index|
-        dfa.states_transformation.push(
-          input_state: line.split[0].sub('-', '').sub('+', '-'),
-          char: alphabet_characters[lc_index],
-          output_state: line_char
+        dfa.states_transitions.push(
+          from: [line.split[0].sub('-', '').sub('+', '')],
+          char: dfa.alphabet[lc_index],
+          to: [line_char]
         )
       end
     end
@@ -58,6 +59,53 @@ class DeterministicFiniteAutomaton
     "AFD: stari - #{@states}, alfabet: #{@alphabet}, stari finale: #{@final_states}, stare initiala: #{@initial_state}."
   end
 
+  def delta(from, char)
+    query = @states_transitions.select{|t| t[:from] == from && t[:char] == char}
+
+    if query.empty?
+      '#'
+    else
+      query.first[:to]
+    end
+  end
+
+  def minimize!
+    partitions = []
+
+    first_partition = []
+    first_partition.push(@final_states)
+    first_partition.push(@states - @final_states)
+
+    partitions.push(first_partition)
+
+    until partitions.size != partitions.uniq.size
+      partition = partitions.last.dup
+
+
+      partition.each do |partition_element|
+        similarity_check = []
+
+        partition_element.each do |state|
+          @alphabet.each do |letter|
+            check = {state: state, char: letter, result: delta(state, letter)}
+            similarity_check.push(check) unless check[:result] == '#'
+          end
+        end
+
+        duplicates = similarity_check
+                    .group_by{|sc| sc[:result]}
+
+        duplicates.each do |key, states|
+          partition.push([partition_element.delete(states.first[:state])]) if states.size > 1
+        end
+      end
+
+      partitions.push(partition)
+    end
+
+
+  end
+
   def check(word)
     word_chars = word.chars
 
@@ -66,8 +114,8 @@ class DeterministicFiniteAutomaton
     current_state = @initial_state
     until word_chars.empty?
       character = word_chars.shift
-      next_state = @states_transformation.select do |state_trans|
-        state_trans[:input_state] == current_state && state_trans[:char] == character
+      next_state = @states_transitions.select do |state_trans|
+        state_trans[:from] == current_state && state_trans[:char] == character
       end
 
 
@@ -75,7 +123,7 @@ class DeterministicFiniteAutomaton
       # it means it is blocked
       raise BlockedError if next_state.empty?
 
-      current_state = next_state[0][:output_state]
+      current_state = next_state[0][:to]
     end
 
     @final_states.include? current_state
